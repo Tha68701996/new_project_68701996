@@ -53,6 +53,7 @@
                 <span><b>ส่งคำขอ</b>{{ formatDateTime(request.createdAt) }}</span>
               </div>
               <p class="reason"><b>เหตุผล</b>{{ request.reason }}</p>
+              <button v-if="request.hasEvidence" class="evidence-button" type="button" @click="viewEvidence(request)">ดูภาพหลักฐาน</button>
             </div>
             <div v-if="request.status === 'pending'" class="actions">
               <button class="reject-button" type="button" :disabled="processingId === request.id" @click="review(request, 'rejected')">ไม่อนุมัติ</button>
@@ -61,6 +62,14 @@
           </article>
         </div>
       </section>
+
+      <div v-if="evidenceImage" class="evidence-modal" role="dialog" aria-modal="true" aria-label="ภาพหลักฐาน" @click.self="evidenceImage = ''">
+        <div class="evidence-dialog">
+          <button class="close-modal" type="button" aria-label="ปิด" @click="evidenceImage = ''">×</button>
+          <h2>ภาพหลักฐาน</h2>
+          <img :src="evidenceImage" alt="ภาพหลักฐานประกอบคำขอลา" />
+        </div>
+      </div>
     </div>
   </main>
 </template>
@@ -75,6 +84,7 @@ const loading = ref(false)
 const processingId = ref(null)
 const errorMessage = ref('')
 const successMessage = ref('')
+const evidenceImage = ref('')
 const filteredRequests = computed(() => filter.value === 'all'
   ? requests.value
   : requests.value.filter(request => request.status === filter.value))
@@ -141,6 +151,18 @@ async function review(request, status) {
     processingId.value = null
   }
 }
+
+async function viewEvidence(request) {
+  errorMessage.value = ''
+  try {
+    const response = await fetch(`${API_URL}&evidence=${encodeURIComponent(request.id)}`, { credentials: 'include' })
+    const result = await response.json()
+    if (!response.ok || !result.success) throw new Error(result.message || 'ไม่สามารถเปิดภาพหลักฐานได้')
+    evidenceImage.value = `data:${result.mime};base64,${result.image}`
+  } catch (error) {
+    errorMessage.value = error instanceof TypeError ? 'เชื่อมต่อระบบไม่ได้' : error.message
+  }
+}
 </script>
 
 <style scoped>
@@ -179,6 +201,7 @@ async function review(request, status) {
 .request-details b, .reason b { color: #9296a3; font-weight: 500; }
 .reason { margin: 12px 0 0; color: #626775; font-size: 10px; line-height: 1.65; overflow-wrap: anywhere; }
 .reason b { margin-right: 8px; }
+.evidence-button { margin-top: 11px; padding: 0; border: 0; color: #555b87; background: transparent; font: inherit; font-size: 10px; text-decoration: underline; cursor: pointer; }
 .actions { display: flex; flex: 0 0 auto; gap: 8px; }
 .actions button { min-height: 36px; padding: 0 11px; border: 1px solid transparent; border-radius: 6px; font: inherit; font-size: 10px; cursor: pointer; }
 .actions button:disabled { opacity: .6; cursor: wait; }
@@ -193,6 +216,11 @@ async function review(request, status) {
 .empty-icon { display: grid; width: 44px; height: 44px; place-items: center; margin-bottom: 12px; border-radius: 13px; color: #45876d; background: #e9f7f0; font-size: 19px; }
 .empty-state strong { color: #5c606d; font-size: 12px; }
 .empty-state p { margin: 7px 0 0; }
+.evidence-modal { position: fixed; z-index: 20; inset: 0; display: grid; padding: 20px; place-items: center; background: rgba(25, 27, 38, .62); }
+.evidence-dialog { position: relative; width: min(100%, 720px); max-height: 90vh; overflow: auto; padding: 22px; border-radius: 12px; background: #fff; }
+.evidence-dialog h2 { margin: 0 0 15px; font-size: 15px; }
+.evidence-dialog img { display: block; max-width: 100%; max-height: 75vh; margin: 0 auto; object-fit: contain; }
+.close-modal { position: absolute; top: 10px; right: 12px; width: 30px; height: 30px; border: 0; border-radius: 50%; color: #646875; background: #f0f1f5; font-size: 20px; cursor: pointer; }
 @media (max-width: 650px) {
   .admin-page { padding: 26px 14px 40px; }
   .admin-heading { align-items: flex-start; }

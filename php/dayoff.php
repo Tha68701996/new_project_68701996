@@ -12,6 +12,32 @@ function sendJson($statusCode, $payload)
 	exit;
 }
 
+function ensureDayoffTable($conn)
+{
+	$conn->exec("CREATE TABLE IF NOT EXISTS dayoff (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		user_id BIGINT UNSIGNED NOT NULL,
+		leave_type VARCHAR(50) NOT NULL,
+		start_date DATE NOT NULL,
+		end_date DATE NOT NULL,
+		reason VARCHAR(500) NOT NULL,
+		evidence_data LONGBLOB NULL,
+		evidence_mime VARCHAR(30) NULL,
+		status ENUM('pending', 'approved', 'rejected', 'cancelled') NOT NULL DEFAULT 'pending',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		INDEX idx_leave_user_status (user_id, status)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+	$columns = $conn->query("SHOW COLUMNS FROM dayoff")->fetchAll(PDO::FETCH_COLUMN);
+	if (!in_array('evidence_data', $columns, true)) {
+		$conn->exec("ALTER TABLE dayoff ADD COLUMN evidence_data LONGBLOB NULL");
+	}
+	if (!in_array('evidence_mime', $columns, true)) {
+		$conn->exec("ALTER TABLE dayoff ADD COLUMN evidence_mime VARCHAR(30) NULL");
+	}
+}
+
 if ($action === 'logout') {
 	$_SESSION = [];
 	session_destroy();
@@ -32,25 +58,33 @@ if ($action === 'admin') {
 	}
 
 	try {
-		$conn->exec("CREATE TABLE IF NOT EXISTS dayoff (
-			id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-			user_id BIGINT UNSIGNED NOT NULL,
-			leave_type VARCHAR(50) NOT NULL,
-			start_date DATE NOT NULL,
-			end_date DATE NOT NULL,
-			reason VARCHAR(500) NOT NULL,
-			status ENUM('pending', 'approved', 'rejected', 'cancelled') NOT NULL DEFAULT 'pending',
-			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-			INDEX idx_leave_user_status (user_id, status)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+		ensureDayoffTable($conn);
+
+		if (isset($_GET['evidence'])) {
+			$evidenceId = filter_var($_GET['evidence'], FILTER_VALIDATE_INT);
+			if (!$evidenceId) {
+				sendJson(422, ['success' => false, 'message' => 'ไม่พบไฟล์หลักฐาน']);
+			}
+			$stmt = $conn->prepare("SELECT evidence_data, evidence_mime FROM dayoff WHERE id = :id");
+			$stmt->execute(['id' => $evidenceId]);
+			$evidence = $stmt->fetch(PDO::FETCH_ASSOC);
+			if (!$evidence || !$evidence['evidence_data']) {
+				sendJson(404, ['success' => false, 'message' => 'รายการนี้ไม่มีภาพหลักฐาน']);
+			}
+			sendJson(200, [
+				'success' => true,
+				'mime' => $evidence['evidence_mime'],
+				'image' => base64_encode($evidence['evidence_data']),
+			]);
+		}
 
 		if ($method === 'GET') {
 			$stmt = $conn->query(
 				"SELECT d.id, d.user_id AS userId, u.name AS userName, u.email,
 					d.leave_type AS type, d.start_date AS startDate,
 					d.end_date AS endDate, DATEDIFF(d.end_date, d.start_date) + 1 AS days,
-					d.reason, d.status, d.created_at AS createdAt
+					d.reason, d.status, d.created_at AS createdAt,
+					(d.evidence_mime IS NOT NULL) AS hasEvidence
 				 FROM dayoff d
 			 LEFT JOIN users u ON u.user_id = d.user_id
 			 WHERE d.status <> 'cancelled'
@@ -84,19 +118,7 @@ if ($action === 'admin') {
 }
 
 try {
-	// สร้างตารางให้อัตโนมัติหากยังไม่มี
-	$conn->exec("CREATE TABLE IF NOT EXISTS dayoff (
-		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-		user_id BIGINT UNSIGNED NOT NULL,
-		leave_type VARCHAR(50) NOT NULL,
-		start_date DATE NOT NULL,
-		end_date DATE NOT NULL,
-		reason VARCHAR(500) NOT NULL,
-		status ENUM('pending', 'approved', 'rejected', 'cancelled') NOT NULL DEFAULT 'pending',
-		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-		INDEX idx_leave_user_status (user_id, status)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+	ensureDayoffTable($conn);
 
 	if ($method === 'GET') {
 		$stmt = $conn->prepare(
@@ -112,11 +134,14 @@ try {
 	}
 
 	if ($method === 'POST') {
+		if (!empty($_POST)) {
+			$data = $_POST;
+		}
 		$type = trim($data['type'] ?? '');
 		$startDate = $data['startDate'] ?? '';
 		$endDate = $data['endDate'] ?? '';
 		$reason = trim($data['reason'] ?? '');
-		$allowedTypes = ['ลาป่วย', 'ลากิจ', 'ลาพักร้อน', 'ลาอื่น ๆ'];
+		$allowedTypes = ['ลาป่วย', 'ลากิจ', 'ลาพักร้อน', 'ลาเหตุฉุกเฉิน', 'ลาอื่น ๆ'];
 		$validDate = function ($value) {
 			if (!is_string($value) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
 				return false;
@@ -131,17 +156,40 @@ try {
 			sendJson(422, ['success' => false, 'message' => 'กรุณาตรวจสอบประเภท วันลา และเหตุผลให้ถูกต้อง']);
 		}
 
+		$imageData = null;
+		$imageMime = null;
+		$upload = $_FILES['evidence'] ?? null;
+		$requiresEvidence = in_array($type, ['ลาป่วย', 'ลาเหตุฉุกเฉิน'], true);
+		if ($upload && $upload['error'] !== UPLOAD_ERR_NO_FILE) {
+			if ($upload['error'] !== UPLOAD_ERR_OK || $upload['size'] > 5 * 1024 * 1024) {
+				sendJson(422, ['success' => false, 'message' => 'อัปโหลดไม่สำเร็จ หรือไฟล์มีขนาดเกิน 5 MB']);
+			}
+			if (!is_uploaded_file($upload['tmp_name'])) {
+				sendJson(422, ['success' => false, 'message' => 'ไฟล์อัปโหลดไม่ถูกต้อง']);
+			}
+			$fileInfo = new finfo(FILEINFO_MIME_TYPE);
+			$imageMime = $fileInfo->file($upload['tmp_name']);
+			if (!in_array($imageMime, ['image/jpeg', 'image/png', 'image/webp'], true)) {
+				sendJson(422, ['success' => false, 'message' => 'อนุญาตเฉพาะไฟล์ภาพ JPG, PNG หรือ WEBP']);
+			}
+			$imageData = file_get_contents($upload['tmp_name']);
+		}
+		if ($requiresEvidence && $imageData === null) {
+			sendJson(422, ['success' => false, 'message' => 'กรุณาแนบภาพหลักฐานสำหรับการลาป่วยหรือเหตุฉุกเฉิน']);
+		}
+
 		$stmt = $conn->prepare(
-			"INSERT INTO dayoff (user_id, leave_type, start_date, end_date, reason)
-			 VALUES (:user_id, :leave_type, :start_date, :end_date, :reason)"
+			"INSERT INTO dayoff (user_id, leave_type, start_date, end_date, reason, evidence_data, evidence_mime)
+			 VALUES (:user_id, :leave_type, :start_date, :end_date, :reason, :evidence_data, :evidence_mime)"
 		);
-		$stmt->execute([
-			'user_id' => $userId,
-			'leave_type' => $type,
-			'start_date' => $startDate,
-			'end_date' => $endDate,
-			'reason' => $reason,
-		]);
+		$stmt->bindValue(':user_id', $userId);
+		$stmt->bindValue(':leave_type', $type);
+		$stmt->bindValue(':start_date', $startDate);
+		$stmt->bindValue(':end_date', $endDate);
+		$stmt->bindValue(':reason', $reason);
+		$stmt->bindValue(':evidence_data', $imageData, $imageData === null ? PDO::PARAM_NULL : PDO::PARAM_LOB);
+		$stmt->bindValue(':evidence_mime', $imageMime, $imageMime === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+		$stmt->execute();
 		sendJson(201, ['success' => true, 'message' => 'ส่งคำขอลาเรียบร้อยแล้ว']);
 	}
 

@@ -42,8 +42,16 @@
 							<option>ลาป่วย</option>
 							<option>ลากิจ</option>
 							<option>ลาพักร้อน</option>
+							<option>ลาเหตุฉุกเฉิน</option>
 							<option>ลาอื่น ๆ</option>
 						</select>
+
+						<div v-if="needsEvidence" class="evidence-field">
+							<label for="evidence">ภาพหลักฐาน <span>*</span></label>
+							<p class="evidence-help">แนบภาพประกอบสำหรับการลาป่วยหรือเหตุฉุกเฉิน (JPG, PNG หรือ WEBP ไม่เกิน 5 MB)</p>
+							<input id="evidence" type="file" accept="image/jpeg,image/png,image/webp" @change="selectEvidence" />
+							<img v-if="evidencePreview" class="evidence-preview" :src="evidencePreview" alt="ตัวอย่างภาพหลักฐาน" />
+						</div>
 
 						<div class="date-fields">
 							<div>
@@ -103,7 +111,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 const API_URL = 'http://localhost/new_project_68701996/php/dayoff.php'
@@ -114,6 +122,8 @@ const formError = ref('')
 const formSuccess = ref('')
 const historyError = ref('')
 const isSubmitting = ref(false)
+const evidenceFile = ref(null)
+const evidencePreview = ref('')
 const requests = ref([])
 
 const todayLabel = new Intl.DateTimeFormat('th-TH', {
@@ -125,14 +135,20 @@ const dayCount = computed(() => {
 })
 const pendingCount = computed(() => requests.value.filter(item => item.status === 'pending').length)
 const approvedCount = computed(() => requests.value.filter(item => item.status === 'approved').length)
+const needsEvidence = computed(() => ['ลาป่วย', 'ลาเหตุฉุกเฉิน'].includes(form.type))
 
 onMounted(loadRequests)
+onUnmounted(clearEvidencePreview)
 
 async function apiRequest(method = 'GET', payload) {
 	const options = { method, credentials: 'include' }
 	if (payload) {
-		options.headers = { 'Content-Type': 'application/json' }
-		options.body = JSON.stringify(payload)
+		if (payload instanceof FormData) {
+			options.body = payload
+		} else {
+			options.headers = { 'Content-Type': 'application/json' }
+			options.body = JSON.stringify(payload)
+		}
 	}
 	const response = await fetch(API_URL, options)
 	const result = await response.json()
@@ -165,11 +181,20 @@ async function submitRequest() {
 		formError.value = 'วันสิ้นสุดต้องไม่อยู่ก่อนวันเริ่มต้น'
 		return
 	}
+	if (needsEvidence.value && !evidenceFile.value) {
+		formError.value = 'กรุณาแนบภาพหลักฐานสำหรับการลาป่วยหรือเหตุฉุกเฉิน'
+		return
+	}
 
 	isSubmitting.value = true
 	try {
-		await apiRequest('POST', form)
+		const payload = new FormData()
+		Object.entries(form).forEach(([key, value]) => payload.append(key, value))
+		if (evidenceFile.value) payload.append('evidence', evidenceFile.value)
+		await apiRequest('POST', payload)
 		Object.assign(form, { type: '', startDate: '', endDate: '', reason: '' })
+		evidenceFile.value = null
+		clearEvidencePreview()
 		formSuccess.value = 'ส่งคำขอลาเรียบร้อยแล้ว'
 		await loadRequests()
 	} catch (error) {
@@ -196,6 +221,36 @@ function statusClass(status) {
 
 function statusLabel(status) {
 	return { pending: 'รออนุมัติ', approved: 'อนุมัติแล้ว', rejected: 'ไม่อนุมัติ' }[status] || status
+}
+
+function selectEvidence(event) {
+	const file = event.target.files?.[0]
+	formError.value = ''
+	formSuccess.value = ''
+	clearEvidencePreview()
+	if (!file) {
+		evidenceFile.value = null
+		return
+	}
+	if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+		formError.value = 'กรุณาเลือกไฟล์ภาพ JPG, PNG หรือ WEBP'
+		event.target.value = ''
+		evidenceFile.value = null
+		return
+	}
+	if (file.size > 5 * 1024 * 1024) {
+		formError.value = 'ไฟล์ภาพต้องมีขนาดไม่เกิน 5 MB'
+		event.target.value = ''
+		evidenceFile.value = null
+		return
+	}
+	evidenceFile.value = file
+	evidencePreview.value = URL.createObjectURL(file)
+}
+
+function clearEvidencePreview() {
+	if (evidencePreview.value) URL.revokeObjectURL(evidencePreview.value)
+	evidencePreview.value = ''
 }
 
 function formatDate(value) {
@@ -248,6 +303,10 @@ function formatDate(value) {
 .leave-form select, .leave-form input, .leave-form textarea { width: 100%; border: 1px solid #e5e7ed; border-radius: 7px; outline: 0; color: #3d414d; background: #fff; font: inherit; font-size: 11px; transition: border-color .2s, box-shadow .2s; }
 .leave-form select, .leave-form input { height: 42px; padding: 0 11px; }
 .leave-form textarea { min-height: 96px; padding: 11px; resize: vertical; line-height: 1.6; }
+.evidence-field { margin: -4px 0 18px; }
+.evidence-help { margin: -2px 0 9px; color: #8c909b; font-size: 10px; line-height: 1.6; }
+.leave-form .evidence-field input { height: auto; min-height: 42px; padding: 9px; }
+.evidence-preview { display: block; width: min(100%, 220px); max-height: 180px; margin-top: 10px; border: 1px solid #e5e7ed; border-radius: 8px; object-fit: cover; }
 .leave-form select:focus, .leave-form input:focus, .leave-form textarea:focus { border-color: #777da9; box-shadow: 0 0 0 3px rgba(100, 105, 160, .09); }
 .leave-form select { margin-bottom: 18px; }
 .date-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 17px; }
