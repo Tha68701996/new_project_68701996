@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Login from '../Login.vue'
+import Dayoff from '../Dayoff.vue'
+import Admin from '../Admin.vue'
 import HomeView from '../views/HomeView.vue'
 
 const routes = [
@@ -12,6 +14,16 @@ const routes = [
     path: '/login',
     name: 'login',
     component: Login
+  },
+  {
+    path: '/dayoff',
+    name: 'dayoff',
+    component: Dayoff
+  },
+  {
+    path: '/admin',
+    name: 'admin',
+    component: Admin
   },
   {
     path: '/home',
@@ -31,6 +43,22 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(process.env.BASE_URL),
   routes
+})
+
+router.beforeEach((to) => {
+  let user = null
+  try {
+    user = JSON.parse(localStorage.getItem('non-user') || 'null')
+  } catch {
+    localStorage.removeItem('non-user')
+  }
+
+  if (['/dayoff', '/admin'].includes(to.path) && !user) {
+    return { name: 'login' }
+  }
+  if (to.path === '/admin' && user?.email?.toLowerCase() !== 'suratan999@gmail.com') {
+    return { name: 'dayoff' }
+  }
 })
 
 export default router

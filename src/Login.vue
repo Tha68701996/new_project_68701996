@@ -111,8 +111,10 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 
-const LOGIN_API_URL = 'http://localhost/vue_newproject_68701996/php/login.php'
+const LOGIN_API_URL = 'http://localhost/new_project_68701996/php/login.php'
+const router = useRouter()
 const email = ref('')
 const password = ref('')
 const rememberMe = ref(false)
@@ -134,7 +136,7 @@ async function handleSubmit() {
   try {
     const response = await fetch(LOGIN_API_URL, {
       method: 'POST',
-      credentials: 'omit',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: email.value,
@@ -148,10 +150,8 @@ async function handleSubmit() {
       throw new Error(result.message || 'เข้าสู่ระบบไม่สำเร็จ')
     }
 
-    notice.value = result.user?.name
-      ? `${result.message} ยินดีต้อนรับ ${result.user.name}`
-      : result.message
-    noticeType.value = 'is-success'
+    localStorage.setItem('non-user', JSON.stringify(result.user || { email: email.value }))
+    await router.push(result.user?.isManager ? '/admin' : '/dayoff')
   } catch (error) {
     notice.value = error instanceof TypeError
       ? 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบว่า Apache และ MySQL ทำงานอยู่'
@@ -290,6 +290,7 @@ button, input { font: inherit; }
 /* Minimal login layout */
 .login-page {
   padding: 32px 20px;
+  min-height: calc(100vh - 66px);
   background: #f7f7f8;
 }
 

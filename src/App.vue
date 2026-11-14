@@ -1,4 +1,5 @@
 <template>
+	<AppNavbar />
 	<main v-if="route.path === '/'" class="welcome-page">
 		<section class="welcome-card">
 			<div class="welcome-brand" aria-label="NON">
@@ -26,6 +27,7 @@
 
 <script setup>
 import { useRoute } from 'vue-router'
+import AppNavbar from './components/AppNavbar.vue'
 
 const route = useRoute()
 </script>
@@ -36,6 +38,7 @@ const route = useRoute()
 .welcome-page {
 	display: grid;
 	min-height: 100vh;
+	min-height: calc(100vh - 66px);
 	padding: 24px;
 	place-items: center;
 	background: #f7f7f8;

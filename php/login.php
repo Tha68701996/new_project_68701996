@@ -1,7 +1,6 @@
 <?php
 include 'db.php'; // ไฟล์เชื่อมต่อ DB
-
-
+session_start();
 
 $data = json_decode(file_get_contents("php://input"), true);
 
@@ -51,13 +50,22 @@ try {
 
         if ($passwordIsValid) {
 
+            session_regenerate_id(true);
+            $managerEmail = 'suratan999@gmail.com';
+            $isManager = strtolower($user['email']) === $managerEmail;
+            $_SESSION['user_id'] = $user['user_id'];
+            $_SESSION['user_name'] = $user['name'];
+            $_SESSION['user_email'] = $user['email'];
+            $_SESSION['is_manager'] = $isManager;
+
             echo json_encode([
                 "success" => true,
                 "message" => "Login สำเร็จ",
                 "user" => [
                     "id" => $user['user_id'],
                     "email" => $user['email'],
-                    "name" => $user['name']
+                    "name" => $user['name'],
+                    "isManager" => $isManager
                 ]
             ]);
 
